@@ -1,141 +1,238 @@
-import os
-import streamlit as st
-import base64
-from openai import OpenAI
-import openai
-#from PIL import Image
-import tensorflow as tf
-from PIL import Image, ImageOps
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+# -*- coding: utf-8 -*-
 import streamlit as st
 from streamlit_drawable_canvas import st_canvas
+import colorsys
+import re
+import datetime
 
-Expert=" "
-profile_imgenh=" "
-    
-def encode_image_to_base64(image_path):
-    try:
-        with open(image_path, "rb") as image_file:
-            encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
-            return encoded_image
-    except FileNotFoundError:
-        return "Error: La imagen no se encontró en la ruta especificada."
+# =========================
+# Estilos e interfaz católica
+# =========================
+st.set_page_config(page_title="✝️ Tablero de Oración y Color", page_icon="🕊️", layout="centered")
 
+st.markdown("""
+<style>
+  :root{
+    --parchment: #F8F3E7;   /* fondo pergamino */
+    --ink:       #4A3B2A;   /* texto café oscuro */
+    --gold:      #C5A253;   /* dorado */
+    --maryblue:  #274B8A;   /* azul mariano */
+  }
+  html, body, .stApp{
+    background: radial-gradient(900px 500px at 10% 0%, #fff9ee 0%, var(--parchment) 60%);
+    color: var(--ink) !important;
+  }
+  h1, h2, h3, h4, h5, h6{
+    color: var(--maryblue) !important;
+    font-family: "Crimson Text", "Georgia", serif;
+    letter-spacing: .3px;
+  }
+  .stButton>button{
+    background: linear-gradient(90deg, var(--gold), #e3c77a) !important;
+    color: #3b2d12 !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 10px rgba(197,162,83,.35);
+  }
+  .stButton>button:hover{
+    filter: brightness(1.05);
+  }
+  .stExpander, [data-testid="stSidebar"]{
+    background: #FAF6EC !important;
+    border: 1px solid #eadfc6 !important;
+    border-radius: 12px !important;
+  }
+  .stSlider, .stSelectbox, .stColorPicker{
+    color: var(--ink) !important;
+  }
+  p, label, div, span{
+    color: var(--ink) !important;
+    font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  hr{ border: none; border-top: 1px solid #e5d9bd; }
+  .blessing{
+    padding: 12px 14px; border-left: 4px solid var(--gold); background: #fffdf7; border-radius: 6px;
+  }
+</style>
+""", unsafe_allow_html=True)
 
-# Streamlit 
-st.set_page_config(page_title='Tablero Inteligente')
-st.title('Tablero Inteligente')
+# =========================
+# Encabezado
+# =========================
+st.title("✝️ Tablero de Oración y Colores Litúrgicos")
+st.markdown("""
+**Dibuja en silencio, ora en el corazón.**  
+Que cada trazo sea una entrega a Dios. **“Señor, que todo lo que haga te glorifique.”** 🙏
+""")
+
+# =========================
+# Paleta litúrgica
+# =========================
+st.subheader("🎨 Colores de la liturgia y su sentido")
+st.markdown(
+"⚪ **Blanco**: Cristo Resucitado, pureza y gozo · "
+"🟩 **Verde**: esperanza y camino cotidiano · "
+"🟥 **Rojo**: Espíritu Santo, amor que se entrega · "
+"🟪 **Morado**: conversión, espera y misericordia · "
+"🩷 **Rosado**: alegría serena en medio de la espera · "
+"🖤 **Negro**: duelo y esperanza en la Vida eterna · "
+"🟨 **Dorado**: solemnidad y gloria a Dios."
+)
+
+# =========================
+# Sidebar (ajustes del lienzo)
+# =========================
 with st.sidebar:
-    st.subheader("Acerca de:")
-    st.subheader("En esta aplicación veremos la capacidad que ahora tiene una máquina de interpretar un boceto")
-st.subheader("Dibuja el boceto en el panel  y presiona el botón para analizarla")
+    st.subheader("🕯️ Prepara tu espacio de oración")
+    canvas_width = st.slider("Ancho del lienzo", 300, 700, 520, 20)
+    canvas_height = st.slider("Alto del lienzo", 220, 600, 320, 20)
 
-# Add canvas component
-#bg_image = st.sidebar.file_uploader("Cargar Imagen:", type=["png", "jpg"])
-# Specify canvas parameters in application
-drawing_mode = "freedraw"
-stroke_width = st.sidebar.slider('Selecciona el ancho de línea', 1, 30, 5)
-#stroke_color = '#FFFFFF' # Set background color to white
-#bg_color = '#000000'
-stroke_color = "#000000" 
-bg_color = '#FFFFFF'
-#realtime_update = st.sidebar.checkbox("Update in realtime", True)
+    drawing_mode = st.selectbox(
+        "Herramienta",
+        ("freedraw", "line", "rect", "circle", "polygon", "point", "transform"),
+        index=0
+    )
+    stroke_width = st.slider("Grosor del trazo", 1, 30, 12)
 
+    stroke_color = st.color_picker("Color del trazo (elige tu intención)", "#274B8A")   # azul mariano por defecto
+    bg_color = st.color_picker("Color de fondo (tu “altar”)", "#F8F3E7")                # pergamino por defecto
 
-# Create a canvas component
+# =========================
+# Lienzo
+# =========================
 canvas_result = st_canvas(
-    fill_color="rgba(255, 165, 0, 0.3)",  # Fixed fill color with some opacity
+    fill_color="rgba(255,255,255,0.25)",
     stroke_width=stroke_width,
     stroke_color=stroke_color,
     background_color=bg_color,
-    height=300,
-    width=400,
-    #background_image= None #Image.open(bg_image) if bg_image else None,
+    height=canvas_height,
+    width=canvas_width,
     drawing_mode=drawing_mode,
-    key="canvas",
+    key=f"canvas_{canvas_width}_{canvas_height}",
 )
 
-ke = st.text_input('Ingresa tu Clave')
-#os.environ['OPENAI_API_KEY'] = st.secrets['OPENAI_API_KEY']
-os.environ['OPENAI_API_KEY'] = ke
+st.divider()
+st.markdown("🕊️ *“Habla, Señor, que tu siervo escucha.”* (1 Sam 3,9)  Deja que la oración se vuelva trazo y color.")
 
+# =========================
+# Funciones espirituales
+# =========================
+def hex_to_hsv(hex_color: str):
+    """Convierte #RRGGBB a HSV (0-360, 0-1, 0-1)."""
+    m = re.fullmatch(r"#?([0-9A-Fa-f]{6})", hex_color.strip())
+    if not m:
+        return 0, 0, 1
+    h = m.group(1)
+    r = int(h[0:2], 16) / 255.0
+    g = int(h[2:4], 16) / 255.0
+    b = int(h[4:6], 16) / 255.0
+    hh, ss, vv = colorsys.rgb_to_hsv(r, g, b)  # h ∈ [0,1)
+    return int(hh * 360), ss, vv
 
-# Retrieve the OpenAI API Key from secrets
-api_key = os.environ['OPENAI_API_KEY']
+def color_category(hex_color: str):
+    """Clasifica el color en una de las categorías litúrgicas básicas."""
+    h, s, v = hex_to_hsv(hex_color)
+    # Blanco / Negro por luminosidad
+    if v > 0.92 and s < 0.12:
+        return "blanco"
+    if v < 0.14:
+        return "negro"
+    # Dorado (amarillos cálidos y brillantes)
+    if 40 <= h <= 60 and v > 0.75:
+        return "dorado"
+    # Verde
+    if 75 <= h <= 170:
+        return "verde"
+    # Rojo (incluye magentas rojizos)
+    if h <= 15 or h >= 345:
+        return "rojo"
+    # Morado
+    if 260 <= h <= 305:
+        return "morado"
+    # Rosado (entre rojo y morado con mucha luz)
+    if 305 < h < 345 and v > 0.7:
+        return "rosado"
+    # Azul Mariano (no litúrgico clásico, pero devocional)
+    if 185 <= h <= 250:
+        return "azul"
+    # Gris / transición si no encaja
+    return "neutro"
 
-# Initialize the OpenAI client with the API key
-client = OpenAI(api_key=api_key)
+# Mensajes por color con enfoque en Dios
+MEDITACIONES = {
+    "blanco": {
+        "mensaje": "El Señor te recuerda que **la pureza del corazón** abre camino a su presencia. Pide la gracia de vivir en la **luz de Cristo Resucitado**.",
+        "oracion": "Señor Jesús, limpia mi interior y hazme reflejo de tu luz. Amén.",
+        "cita": "“Dichosos los limpios de corazón, porque ellos verán a Dios.” (Mt 5,8)"
+    },
+    "verde": {
+        "mensaje": "Dios te invita a **esperar confiado** y perseverar en lo cotidiano. Él hace germinar la semilla en silencio.",
+        "oracion": "Señor, fortalece mi esperanza y guía mis pasos cada día. Amén.",
+        "cita": "“El Señor es mi pastor, nada me falta.” (Sal 23,1)"
+    },
+    "rojo": {
+        "mensaje": "El Espíritu Santo **enciende el amor** que se entrega. Une tus sacrificios al de Cristo y deja que su fuego purifique.",
+        "oracion": "Ven, Espíritu Santo, enciende en mí el fuego de tu amor. Amén.",
+        "cita": "“Recibirán la fuerza del Espíritu Santo.” (Hch 1,8)"
+    },
+    "morado": {
+        "mensaje": "Tiempo de **volver al Padre**. En el silencio, Dios te espera con misericordia para sanar y comenzar de nuevo.",
+        "oracion": "Padre, dame un corazón humilde y dócil a tu voluntad. Amén.",
+        "cita": "“Vuelvan a mí de todo corazón.” (Jl 2,12)"
+    },
+    "rosado": {
+        "mensaje": "Dios te concede una **alegría serena** en medio del camino. Celebra las pequeñas victorias de la gracia.",
+        "oracion": "Señor, enséñame a alegrarme en Ti, fuente de todo bien. Amén.",
+        "cita": "“Estén siempre alegres en el Señor.” (Flp 4,4)"
+    },
+    "negro": {
+        "mensaje": "En el duelo, **Cristo es esperanza de Vida eterna**. Él hace nuevas todas las cosas.",
+        "oracion": "Señor, consuela a los que sufren y fortalécenos en tu promesa. Amén.",
+        "cita": "“Yo soy la resurrección y la vida.” (Jn 11,25)"
+    },
+    "dorado": {
+        "mensaje": "Dios merece **toda gloria**. Contempla sus maravillas y ofrécele tu vida como incienso agradable.",
+        "oracion": "Dios de majestad, recibe mi alabanza y mi corazón. Amén.",
+        "cita": "“Del Señor es la tierra y cuanto la llena.” (Sal 24,1)"
+    },
+    "azul": {
+        "mensaje": "María te toma de la mano. **Aprende de su fe y docilidad**: “Hágase en mí según tu Palabra”.",
+        "oracion": "Madre, llévame a Jesús y enséñame a confiar como tú. Amén.",
+        "cita": "“Alégrate, llena de gracia, el Señor está contigo.” (Lc 1,28)"
+    },
+    "neutro": {
+        "mensaje": "Dios obra también en los **tiempos de transición**. Permanece fiel: su gracia te sostiene.",
+        "oracion": "Señor, aumenta mi fe mientras espero en Ti. Amén.",
+        "cita": "“No temas, porque yo estoy contigo.” (Is 41,10)"
+    }
+}
 
-analyze_button = st.button("Analiza la imagen", type="secondary")
+def generar_reflexion(hex_color: str):
+    cat = color_category(hex_color)
+    return cat, MEDITACIONES.get(cat, MEDITACIONES["neutro"])
 
-# Check if an image has been uploaded, if the API key is available, and if the button has been pressed
-if canvas_result.image_data is not None and api_key and analyze_button:
+# =========================
+# Generar reflexión según color elegido
+# =========================
+st.markdown("#### 🙏 Pide una palabra de Dios sobre tu oración en color")
+if st.button("Generar reflexión espiritual"):
+    categoria, info = generar_reflexion(stroke_color)
+    etiqueta = {
+        "blanco":"⚪ Blanco", "verde":"🟩 Verde", "rojo":"🟥 Rojo", "morado":"🟪 Morado",
+        "rosado":"🩷 Rosado", "negro":"🖤 Negro", "dorado":"🟨 Dorado",
+        "azul":"🔵 Azul (devocional)", "neutro":"🌫️ Transición"
+    }[categoria]
 
-    with st.spinner("Analizando ..."):
-        # Encode the image
-        input_numpy_array = np.array(canvas_result.image_data)
-        input_image = Image.fromarray(input_numpy_array.astype('uint8'),'RGBA')
-        input_image.save('img.png')
-        
-      # Codificar la imagen en base64
- 
-        base64_image = encode_image_to_base64("img.png")
-            
-        prompt_text = (f"Describe in spanish briefly the image")
-    
-      # Create the payload for the completion request
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt_text},
-                    {
-                        "type": "image_url",
-                        "image_url":f"data:image/png;base64,{base64_image}",
-                    },
-                ],
-            }
-        ]
-    
-        # Make the request to the OpenAI API
-        try:
-            full_response = ""
-            message_placeholder = st.empty()
-            response = openai.chat.completions.create(
-              model= "gpt-4o-mini",  #o1-preview ,gpt-4o-mini
-              messages=[
-                {
-                   "role": "user",
-                   "content": [
-                     {"type": "text", "text": prompt_text},
-                     {
-                       "type": "image_url",
-                       "image_url": {
-                         "url": f"data:image/png;base64,{base64_image}",
-                       },
-                     },
-                   ],
-                  }
-                ],
-              max_tokens=500,
-              )
-            #response.choices[0].message.content
-            if response.choices[0].message.content is not None:
-                    full_response += response.choices[0].message.content
-                    message_placeholder.markdown(full_response + "▌")
-            # Final update to placeholder after the stream ends
-            message_placeholder.markdown(full_response)
-            if Expert== profile_imgenh:
-               st.session_state.mi_respuesta= response.choices[0].message.content #full_response 
-    
-            # Display the response in the app
-            #st.write(response.choices[0])
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-else:
-    # Warnings for user action required
+    st.markdown(f"**Color discernido:** {etiqueta}")
+    st.markdown(f"**Mensaje:** {info['mensaje']}")
+    st.markdown(f"**Oración:** _{info['oracion']}_")
+    st.markdown(f"**Palabra de Dios:** “_{info['cita']}_”")
+    st.markdown(
+        f"<div class='blessing'>Que el Señor te bendiga y te guarde. "
+        f"📜 <em>{datetime.date.today().strftime('%d %b %Y')}</em></div>",
+        unsafe_allow_html=True
+    )
 
-    if not api_key:
-        st.warning("Por favor ingresa tu API key.")
+st.divider()
+st.markdown("🕯️ *“Todo para mayor gloria de Dios.”* — **San Ignacio de Loyola**")
