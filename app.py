@@ -22,6 +22,10 @@ if 'full_response' not in st.session_state:
     st.session_state.full_response = ""
 if 'base64_image' not in st.session_state:
     st.session_state.base64_image = ""
+if 'probability_result' not in st.session_state:
+    st.session_state.probability_result = None
+if 'servo_angle' not in st.session_state:
+    st.session_state.servo_angle = None
 
 # ============================
 # Función para convertir imagen a Base64
@@ -78,8 +82,13 @@ canvas_result = st_canvas(
 # ============================
 ke = st.text_input('Ingresa tu Clave Mágica (API Key)', type="password")
 os.environ['OPENAI_API_KEY'] = ke
-api_key = os.environ['OPENAI_API_KEY']
-client = OpenAI(api_key=api_key)
+api_key = os.environ.get('OPENAI_API_KEY', '')
+client = None
+if api_key:
+    try:
+        client = OpenAI(api_key=api_key)
+    except Exception:
+        client = None
 
 # ============================
 # Botón para análisis
@@ -162,5 +171,93 @@ if st.session_state.analysis_done:
     st.subheader("⋆.˚Consejo del destino⋆.˚")
     st.markdown(consejo_texto)
 
-if not api_key:
-    st.warning("Por favor, ingresa tu Clave Mágica para invocar al Oráculo.")
+    # -------------------------
+    # NUEVO: Preguntar si quiere saber probabilidad
+    # -------------------------
+    st.divider()
+    st.subheader("¿Quieres saber qué tan probable es este futuro?")
+
+    # Botones para preguntar al usuario
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        want_prob = st.button("Sí, muéstrame la probabilidad")
+    with col2:
+        skip_prob = st.button("No, gracias")
+
+    if skip_prob:
+        st.info("Como prefieras. El Oráculo permanece a tu servicio si cambias de opinión.")
+
+    if want_prob:
+        if not api_key:
+            st.error("Necesitas ingresar tu Clave Mágica (API Key) para que el Oráculo calcule la probabilidad.")
+        else:
+            with st.spinner("El Oráculo está evaluando la probabilidad..."):
+                # Prompt para clasificar probabilidad en Alto/Medio/Bajo y dar porcentaje estimado
+                prob_prompt = (
+                    "Eres un analista místico. Lee la siguiente predicción y evalúa qué tan probable es que ese futuro "
+                    "se cumpla: \n\n"
+                    f"Predicción:\n{st.session_state.full_response}\n\n"
+                    "Devuélvelo en formato JSON simple: {\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>,"
+                    "\"reason\":\"una frase breve explicando por qué\"}. Solo devuelve JSON."
+                )
+                try:
+                    prob_resp = openai.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": prob_prompt}],
+                        max_tokens=150,
+                    )
+                    prob_text = prob_resp.choices[0].message.content.strip()
+
+                    # Intento de parse simple del JSON (sin dependencia json.loads para tolerancia)
+                    import json
+                    try:
+                        prob_json = json.loads(prob_text)
+                    except Exception:
+                        # Si el asistente no devolvió puro JSON, extraer manualmente buscando label y numbers
+                        prob_json = {"label": "MEDIO", "confidence": 50, "reason": "Estimación mística automatica."}
+
+                    label = prob_json.get("label", "MEDIO")
+                    confidence = prob_json.get("confidence", 50)
+                    reason = prob_json.get("reason", "")
+
+                    # Mapear etiqueta a ángulo de servo
+                    # Alto -> ángulo grande (ej. 160), Medio -> 90, Bajo -> 20
+                    angle_map = {"ALTO": 160, "ALTO.": 160, "ALTA": 160, "MEDIO": 90, "MEDIO.": 90, "BAJO": 20, "BAJA": 20}
+                    servo_angle = angle_map.get(str(label).upper(), 90)
+
+                    # Guardar en session_state
+                    st.session_state.probability_result = {"label": label, "confidence": confidence, "reason": reason}
+                    st.session_state.servo_angle = servo_angle
+
+                    st.success(f"Probabilidad: **{label}** — Confianza: **{confidence}%**")
+                    st.markdown(f"**Motivo:** {reason}")
+                    st.markdown(f"**Ángulo sugerido para el servo (Arduino):** **{servo_angle}°**")
+                except Exception as e:
+                    st.error(f"No se pudo evaluar la probabilidad: {e}")
+
+    # Si ya se calculó la probabilidad, mostrar instrucciones Arduino
+    if st.session_state.probability_result is not None:
+        st.divider()
+        st.subheader("Implementación en Servo (Arduino)")
+
+        st.markdown("""
+        **Resumen rápido**
+        - Etiqueta: `{label}`  
+        - Confianza: `{conf}%`  
+        - Ángulo sugerido: `{angle}°`  
+        """.format(
+            label=st.session_state.probability_result.get("label"),
+            conf=st.session_state.probability_result.get("confidence"),
+            angle=st.session_state.servo_angle
+        ))
+
+        st.markdown("""
+        **Cómo conectar el servo**
+        1. Señal (cable amarillo/naranja) -> Pin digital PWM (ej. D9).  
+        2. VCC (rojo) -> 5V (o alimentación externa 5V recomendada si el servo consume corriente).  
+        3. GND (marrón/negro) -> GND de Arduino (y GND común si usas fuente externa).  
+        **IMPORTANTE:** si usas una fuente externa para el servo, conecta las tierras (GND) entre Arduino y la fuente.
+        """)
+
+        st.markdown("**Sketch de Arduino (sube esto al Arduino)**")
+        arduino_code =_
