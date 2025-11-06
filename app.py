@@ -5,7 +5,9 @@ from openai import OpenAI
 import openai
 from PIL import Image
 import numpy as np
+from gtts import gTTS
 from streamlit_drawable_canvas import st_canvas
+import json
 
 # ============================
 # Variables
@@ -45,11 +47,11 @@ st.set_page_config(page_title='Tablero Místico', layout="wide")
 st.title(' ꩜ Tablero Místico de Predicciones ꩜ ')
 
 st.markdown("""
-Bienvenido/a al Oráculo Digital
+Bienvenido/a al Oráculo Digital  
 ✶✶✶ Lo que traces aquí no será un simple dibujo...  
 Cada línea, cada trazo y cada forma revelará algo oculto en tu mente, y con ello... tu destino.  
 
-Dibuja sin pensar y cuando estés listo, pide al tablero que revele lo que el futuro guarda para ti.
+Dibuja sin pensar y cuando estés listo, pide al tablero que revele lo que el futuro guarda para ti.  
 ✩₊˚.⋆☾𓃦☽⋆⁺₊✧
 """)
 
@@ -65,7 +67,6 @@ with st.sidebar:
 # ============================
 # Canvas para dibujar
 # ============================
-drawing_mode = "freedraw"
 canvas_result = st_canvas(
     fill_color="rgba(255, 165, 0, 0.3)",
     stroke_width=stroke_width,
@@ -73,7 +74,7 @@ canvas_result = st_canvas(
     background_color=bg_color,
     height=350,
     width=450,
-    drawing_mode=drawing_mode,
+    drawing_mode="freedraw",
     key="canvas",
 )
 
@@ -93,7 +94,7 @@ if api_key:
 # ============================
 # Botón para análisis
 # ============================
-analyze_button = st.button("Revela mi futuro")
+analyze_button = st.button("🔮 Revela mi futuro")
 
 if canvas_result.image_data is not None and api_key and analyze_button:
     with st.spinner("Consultando al Oráculo..."):
@@ -148,56 +149,68 @@ if st.session_state.analysis_done:
     st.subheader("𓁻 Tu destino revelado 𓁻")
     st.markdown(f"{st.session_state.full_response}")
 
-    # Generar consejo del destino
-    with st.spinner("Consultando un consejo del destino..."):
-        consejo_prompt = (
-            f"Basado en esta predicción del futuro: '{st.session_state.full_response}', "
-            "genera un consejo espiritual y enigmático. "
-            "El consejo debe ser breve, inspirador y sonar como una guía del destino. "
-            "Usa metáforas y un tono místico."
-        )
-
-        try:
-            consejo_response = openai.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": consejo_prompt}],
-                max_tokens=200,
-            )
-            consejo_texto = consejo_response.choices[0].message.content
-        except Exception as e:
-            consejo_texto = f"No se pudo obtener un consejo del destino: {e}"
-
-    st.divider()
-    st.subheader("⋆.˚Consejo del destino⋆.˚")
-    st.markdown(consejo_texto)
-
-    # -------------------------
-    # NUEVO: Preguntar si quiere saber probabilidad
-    # -------------------------
     st.divider()
     st.subheader("¿Quieres saber qué tan probable es este futuro?")
 
-    # Botones para preguntar al usuario
     col1, col2 = st.columns([1, 1])
     with col1:
         want_prob = st.button("Sí, muéstrame la probabilidad")
     with col2:
-        skip_prob = st.button("No, gracias")
+        advice_button = st.button("Escuchar el consejo del destino")
 
-    if skip_prob:
-        st.info("Como prefieras. El Oráculo permanece a tu servicio si cambias de opinión.")
+    # ============================
+    # CONSEJO DEL DESTINO
+    # ============================
+    if advice_button:
+        with st.spinner("Consultando un consejo del destino..."):
+            consejo_prompt = (
+                f"Basado en esta predicción del futuro: '{st.session_state.full_response}', "
+                "genera un consejo espiritual y enigmático. "
+                "El consejo debe ser breve, inspirador y sonar como una guía del destino. "
+                "Usa metáforas y un tono místico."
+            )
 
+            try:
+                consejo_response = openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": consejo_prompt}],
+                    max_tokens=200,
+                )
+                consejo_texto = consejo_response.choices[0].message.content.strip()
+            except Exception as e:
+                consejo_texto = f"No se pudo obtener un consejo del destino: {e}"
+
+        st.divider()
+        st.subheader("⋆.˚Consejo del destino⋆.˚")
+        st.markdown(consejo_texto)
+
+        # --- Convertir el texto a voz ---
+        try:
+            tts = gTTS(consejo_texto, lang="es")
+            audio_path = "consejo_oraculo.mp3"
+            tts.save(audio_path)
+
+            audio_file = open(audio_path, "rb")
+            audio_bytes = audio_file.read()
+            st.audio(audio_bytes, format="audio/mp3")
+
+        except Exception as e:
+            st.error(f"No se pudo generar el audio: {e}")
+
+    # ============================
+    # PROBABILIDAD
+    # ============================
     if want_prob:
         if not api_key:
             st.error("Necesitas ingresar tu Clave Mágica (API Key) para que el Oráculo calcule la probabilidad.")
         else:
             with st.spinner("El Oráculo está evaluando la probabilidad..."):
-                # Prompt para clasificar probabilidad en Alto/Medio/Bajo y dar porcentaje estimado
                 prob_prompt = (
                     "Eres un analista místico. Lee la siguiente predicción y evalúa qué tan probable es que ese futuro "
                     "se cumpla: \n\n"
                     f"Predicción:\n{st.session_state.full_response}\n\n"
-                    "Devuélvelo en formato JSON simple: {\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>,"
+                    "Devuélvelo en formato JSON simple: "
+                    "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>,"
                     "\"reason\":\"una frase breve explicando por qué\"}. Solo devuelve JSON."
                 )
                 try:
@@ -208,24 +221,18 @@ if st.session_state.analysis_done:
                     )
                     prob_text = prob_resp.choices[0].message.content.strip()
 
-                    # Intento de parse simple del JSON (sin dependencia json.loads para tolerancia)
-                    import json
                     try:
                         prob_json = json.loads(prob_text)
                     except Exception:
-                        # Si el asistente no devolvió puro JSON, extraer manualmente buscando label y numbers
-                        prob_json = {"label": "MEDIO", "confidence": 50, "reason": "Estimación mística automatica."}
+                        prob_json = {"label": "MEDIO", "confidence": 50, "reason": "Estimación mística automática."}
 
                     label = prob_json.get("label", "MEDIO")
                     confidence = prob_json.get("confidence", 50)
                     reason = prob_json.get("reason", "")
 
-                    # Mapear etiqueta a ángulo de servo
-                    # Alto -> ángulo grande (ej. 160), Medio -> 90, Bajo -> 20
-                    angle_map = {"ALTO": 160, "ALTO.": 160, "ALTA": 160, "MEDIO": 90, "MEDIO.": 90, "BAJO": 20, "BAJA": 20}
+                    angle_map = {"ALTO": 160, "ALTA": 160, "MEDIO": 90, "BAJO": 20, "BAJA": 20}
                     servo_angle = angle_map.get(str(label).upper(), 90)
 
-                    # Guardar en session_state
                     st.session_state.probability_result = {"label": label, "confidence": confidence, "reason": reason}
                     st.session_state.servo_angle = servo_angle
 
@@ -235,29 +242,22 @@ if st.session_state.analysis_done:
                 except Exception as e:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
-    # Si ya se calculó la probabilidad, mostrar instrucciones Arduino
+    # ============================
+    # Mostrar info Arduino si hay probabilidad
+    # ============================
     if st.session_state.probability_result is not None:
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
-
-        st.markdown("""
+        st.markdown(f"""
         **Resumen rápido**
-        - Etiqueta: `{label}`  
-        - Confianza: `{conf}%`  
-        - Ángulo sugerido: `{angle}°`  
-        """.format(
-            label=st.session_state.probability_result.get("label"),
-            conf=st.session_state.probability_result.get("confidence"),
-            angle=st.session_state.servo_angle
-        ))
-
+        - Etiqueta: `{st.session_state.probability_result.get("label")}`  
+        - Confianza: `{st.session_state.probability_result.get("confidence")}%`  
+        - Ángulo sugerido: `{st.session_state.servo_angle}°`  
+        """)
         st.markdown("""
         **Cómo conectar el servo**
-        1. Señal (cable amarillo/naranja) -> Pin digital PWM (ej. D9).  
-        2. VCC (rojo) -> 5V (o alimentación externa 5V recomendada si el servo consume corriente).  
-        3. GND (marrón/negro) -> GND de Arduino (y GND común si usas fuente externa).  
-        **IMPORTANTE:** si usas una fuente externa para el servo, conecta las tierras (GND) entre Arduino y la fuente.
+        1. Señal (amarillo/naranja) → Pin PWM (ej. D9)  
+        2. VCC (rojo) → 5V (o fuente externa 5V si consume mucho)  
+        3. GND (negro/marrón) → GND de Arduino (tierra común si usas fuente externa)  
         """)
 
-        st.markdown("**Sketch de Arduino (sube esto al Arduino)**")
-        arduino_code =_
