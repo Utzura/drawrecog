@@ -240,6 +240,12 @@ if st.session_state.analysis_done:
                     st.success(f"Probabilidad: **{label}** — Confianza: **{confidence}%**")
                     st.markdown(f"**Motivo:** {reason}")
                     st.markdown(f"**Ángulo sugerido para el servo (Arduino):** **{servo_angle}°**")
+                       client1= paho.Client("z4m")                           
+                        client1.on_publish = on_publish                          
+                        client1.connect(broker,port)  
+                        message =json.dumps({"Act1":choice})
+                        ret= client1.publish("cmqtt_z4m", message)
+                        
                 except Exception as e:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
