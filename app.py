@@ -8,6 +8,7 @@ import numpy as np
 from gtts import gTTS
 from streamlit_drawable_canvas import st_canvas
 import json
+import paho.mqtt.client as mqtt
 
 # ============================
 # Variables
