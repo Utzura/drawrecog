@@ -248,17 +248,6 @@ if st.session_state.analysis_done:
     # Mostrar info Arduino si hay probabilidad
     # ============================
     if st.session_state.probability_result is not None:
-        broker="broker.mqttdashboard.com"
-        port=1883
-        client1= paho.Client("z4m")
-        # client1.on_message = on_message
-         client1= paho.Client("z4m")                           
-        client1.on_publish = on_publish                          
-        client1.connect(broker,port)  
-         message =json.dumps({"Act1":choice})
-        ret= client1.publish("cmqtt_z4m", message)
-                        
-
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
         st.markdown(f"""
