@@ -229,9 +229,23 @@ if st.session_state.analysis_done:
                     label = prob_json.get("label", "MEDIO")
                     confidence = prob_json.get("confidence", 50)
                     reason = prob_json.get("reason", "")
+                    # Normalizar etiqueta del modelo
+                    raw_label = str(label).strip().upper()
 
-                    angle_map = {"ALTO": 160, "ALTA": 160, "MEDIO": 90, "BAJO": 20, "BAJA": 20}
-                    servo_angle = angle_map.get(str(label).upper(), 90)
+                    if "ALTO" in raw_label:
+                        normalized = "ALTO"
+                    elif "MEDIO" in raw_label or "MEDIA" in raw_label:
+                        normalized = "MEDIO"
+                    elif "BAJO" in raw_label or "BAJA" in raw_label:
+                        normalized = "BAJO"
+                    else:
+                        normalized = "MEDIO"   # fallback razonable
+
+# Usar etiqueta normalizada
+                    angle_map = {"ALTO": 160, "MEDIO": 90, "BAJO": 20}
+                    servo_angle = angle_map.get(normalized, 90)
+                    #angle_map = {"ALTO": 160, "ALTA": 160, "MEDIO": 90, "BAJO": 20, "BAJA": 20}
+                    #servo_angle = angle_map.get(str(label).upper(), 90)
 
                     st.session_state.probability_result = {"label": label, "confidence": confidence, "reason": reason}
                     st.session_state.servo_angle = servo_angle
