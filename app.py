@@ -258,7 +258,7 @@ if st.session_state.analysis_done:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
   # Mostrar info Arduino si hay probabilidad
-    if st.session_state.probability_result is not None:
+   if st.session_state.probability_result is not None:
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
         st.markdown(f"""
@@ -276,9 +276,8 @@ if st.session_state.analysis_done:
         """)
 
         # ===============================
-        # SLIDER CORREGIDO
+        # SLIDER
         # ===============================
-        # Este SIEMPRE arranca en 0 y ya no recuerda valores anteriores
         if "slider_value" not in st.session_state:
             st.session_state.slider_value = 0.0
 
@@ -302,7 +301,6 @@ if st.session_state.analysis_done:
             if st.button("Enviar ON al ESP32"):
                 ok, err = mqtt_publish("cmqtt_s", {"Act1": "ON"})
                 if ok:
-                    st.session_state.last_mqtt_publish = f"Publicado Act1: ON"
                     st.success("Se envió ON al ESP32")
                 else:
                     st.error(f"No se pudo publicar: {err}")
@@ -311,42 +309,50 @@ if st.session_state.analysis_done:
             if st.button("Enviar OFF al ESP32"):
                 ok, err = mqtt_publish("cmqtt_s", {"Act1": "OFF"})
                 if ok:
-                    st.session_state.last_mqtt_publish = f"Publicado Act1: OFF"
                     st.success("Se envió OFF al ESP32")
                 else:
                     st.error(f"No se pudo publicar: {err}")
 
         st.markdown("---")
 
-   # Enviar ángulo sugerido (como valor 0..100 que el ESP32 espera)
-if st.button("Enviar ángulo sugerido al ESP32"):
-    servo_angle_deg = st.session_state.get("servo_angle", 90) or 90
-    
-    # Convertir 0..180 a 0..100
-    percent_value = round(max(0, min(100, (servo_angle_deg / 180.0) * 100.0)), 2)
-    payload = {"Analog": float(percent_value)}
+        # ===============================
+        # BOTÓN: Enviar ángulo sugerido
+        # ===============================
+        if st.button("Enviar ángulo sugerido al ESP32"):
+            servo_angle_deg = st.session_state.get("servo_angle", 90)
 
-    ok, err = mqtt_publish("cmqtt_a", payload)
-    if ok:
-        st.session_state.last_mqtt_publish = f"Publicado Analog (sugerido): {payload}"
-        st.success(f"Publicado {payload} en cmqtt_a")
-    else:
-        st.error(f"No se pudo publicar: {err}")
+            # Convertir 0..180 a 0..100
+            percent_value = round((servo_angle_deg / 180.0) * 100.0, 2)
+            percent_value = max(0, min(100, percent_value))
 
-    st.write("DEBUG publicado:", payload)
+            payload = {"Analog": float(percent_value)}
 
-# Enviar valor manual del slider (0..100)
-st.markdown("---")
-if st.button("Enviar valor manual al ESP32"):
-    manual_val = float(values)
-    payload = {"Analog": manual_val}
+            ok, err = mqtt_publish("cmqtt_a", payload)
+            if ok:
+                st.success(f"Publicado {payload} en cmqtt_a")
+            else:
+                st.error(f"No se pudo publicar: {err}")
 
-    ok, err = mqtt_publish("cmqtt_a", payload)
-    if ok:
-        st.session_state.last_mqtt_publish = f"Publicado Analog manual: {payload}"
-        st.success(f"Publicado {payload} en cmqtt_a")
-    else:
-        st.error(f"No se pudo publicar: {err}")
+            st.write("DEBUG publicado:", payload)
 
-    st.write("DEBUG publicado:", payload)
+        # ===============================
+        # BOTÓN: Enviar valor manual (slider)
+        # ===============================
+        if st.button("Enviar valor manual al ESP32"):
+            try:
+                manual_val = float(values)
+            except:
+                st.error("El valor del slider no es válido")
+                manual_val = None
+
+            if manual_val is not None:
+                payload = {"Analog": manual_val}
+                ok, err = mqtt_publish("cmqtt_a", payload)
+
+                if ok:
+                    st.success(f"Publicado {payload} en cmqtt_a")
+                else:
+                    st.error(f"No se pudo publicar: {err}")
+
+                st.write("DEBUG publicado:", payload)
 
