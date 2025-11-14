@@ -1,4 +1,5 @@
 import os
+import time
 import streamlit as st
 import base64
 from openai import OpenAI
@@ -11,34 +12,29 @@ import json
 import paho.mqtt.client as paho
 
 # ============================
-# Variables
+# Config MQTT (ajusta si hace falta)
 # ============================
-Expert = " "
-profile_imgenh = " "
+BROKER = "157.230.214.127"
+PORT = 1883
+MQTT_CLIENT_ID = "STREAMLIT_MYSTIC_PUB"
+
+def mqtt_publish(topic: str, payload: dict, qos: int = 0, retain: bool = False):
+    """Conecta al broker, publica el mensaje (JSON) y se desconecta."""
+    try:
+        client = paho.Client(MQTT_CLIENT_ID)
+        client.on_publish = lambda c, u, r: print("Publicado:", topic, payload)
+        client.connect(BROKER, PORT, keepalive=60)
+        # Convertir payload a JSON string
+        payload_str = json.dumps(payload)
+        client.publish(topic, payload_str, qos=qos, retain=retain)
+        client.disconnect()
+        return True, None
+    except Exception as e:
+        return False, str(e)
 
 # ============================
-# Inicializar session_state
+# Variables / session_state inicial
 # ============================
-# Mqtt connect
-def on_publish(client,userdata,result):             #create function for callback
-    print("el dato ha sido publicado \n")
-    pass
-
-def on_message(client, userdata, message):
-    global message_received
-    time.sleep(2)
-    message_received=str(message.payload.decode("utf-8"))
-    st.write(message_received)
-
-        
-
-
-broker="157.230.214.127"
-port=1883
-client1= paho.Client("GIT-HUB")
-client1.on_message = on_message
-
-#Inicio normal
 if 'analysis_done' not in st.session_state:
     st.session_state.analysis_done = False
 if 'full_response' not in st.session_state:
@@ -49,6 +45,8 @@ if 'probability_result' not in st.session_state:
     st.session_state.probability_result = None
 if 'servo_angle' not in st.session_state:
     st.session_state.servo_angle = None
+if 'last_mqtt_publish' not in st.session_state:
+    st.session_state.last_mqtt_publish = ""
 
 # ============================
 # Función para convertir imagen a Base64
@@ -71,23 +69,16 @@ st.markdown("""
 Bienvenido/a al Oráculo Digital  
 ✶✶✶ Lo que traces aquí no será un simple dibujo...  
 Cada línea, cada trazo y cada forma revelará algo oculto en tu mente, y con ello... tu destino.  
-
-Dibuja sin pensar y cuando estés listo, pide al tablero que revele lo que el futuro guarda para ti.  
-✩₊˚.⋆☾𓃦☽⋆⁺₊✧
 """)
 
-# ============================
-# Panel lateral
-# ============================
+# Sidebar
 with st.sidebar:
     st.subheader("Herramientas de tu destino")
     stroke_width = st.slider('Grosor de la pluma', 1, 30, 5)
     stroke_color = st.color_picker("Color de tu energía", "#000000")
     bg_color = st.color_picker("Color de tu universo", "#FFFFFF")
 
-# ============================
-# Canvas para dibujar
-# ============================
+# Canvas
 canvas_result = st_canvas(
     fill_color="rgba(255, 165, 0, 0.3)",
     stroke_width=stroke_width,
@@ -99,9 +90,7 @@ canvas_result = st_canvas(
     key="canvas",
 )
 
-# ============================
 # API Key
-# ============================
 ke = st.text_input('Ingresa tu Clave Mágica (API Key)', type="password")
 os.environ['OPENAI_API_KEY'] = ke
 api_key = os.environ.get('OPENAI_API_KEY', '')
@@ -112,9 +101,7 @@ if api_key:
     except Exception:
         client = None
 
-# ============================
 # Botón para análisis
-# ============================
 analyze_button = st.button("🔮 Revela mi futuro")
 
 if canvas_result.image_data is not None and api_key and analyze_button:
@@ -162,9 +149,7 @@ if canvas_result.image_data is not None and api_key and analyze_button:
         except Exception as e:
             st.error(f"Ocurrió un error en la lectura de tu destino: {e}")
 
-# ============================
 # Mostrar resultado
-# ============================
 if st.session_state.analysis_done:
     st.divider()
     st.subheader("𓁻 Tu destino revelado 𓁻")
@@ -179,9 +164,7 @@ if st.session_state.analysis_done:
     with col2:
         advice_button = st.button("Escuchar el consejo del destino")
 
-    # ============================
     # CONSEJO DEL DESTINO
-    # ============================
     if advice_button:
         with st.spinner("Consultando un consejo del destino..."):
             consejo_prompt = (
@@ -205,22 +188,18 @@ if st.session_state.analysis_done:
         st.subheader("⋆.˚Consejo del destino⋆.˚")
         st.markdown(consejo_texto)
 
-        # --- Convertir el texto a voz ---
+        # TTS
         try:
             tts = gTTS(consejo_texto, lang="es")
             audio_path = "consejo_oraculo.mp3"
             tts.save(audio_path)
-
             audio_file = open(audio_path, "rb")
             audio_bytes = audio_file.read()
             st.audio(audio_bytes, format="audio/mp3")
-
         except Exception as e:
             st.error(f"No se pudo generar el audio: {e}")
 
-    # ============================
     # PROBABILIDAD
-    # ============================
     if want_prob:
         if not api_key:
             st.error("Necesitas ingresar tu Clave Mágica (API Key) para que el Oráculo calcule la probabilidad.")
@@ -231,7 +210,7 @@ if st.session_state.analysis_done:
                     "se cumpla: \n\n"
                     f"Predicción:\n{st.session_state.full_response}\n\n"
                     "Devuélvelo en formato JSON simple: "
-                    "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>,"
+                    "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>," 
                     "\"reason\":\"una frase breve explicando por qué\"}. Solo devuelve JSON."
                 )
                 try:
@@ -264,9 +243,7 @@ if st.session_state.analysis_done:
                 except Exception as e:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
-    # ============================
     # Mostrar info Arduino si hay probabilidad
-    # ============================
     if st.session_state.probability_result is not None:
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
@@ -283,3 +260,38 @@ if st.session_state.analysis_done:
         3. GND (negro/marrón) → GND de Arduino (tierra común si usas fuente externa)  
         """)
 
+        # Botones para enviar al ESP32 (Wokwi)
+        col_send1, col_send2 = st.columns(2)
+        with col_send1:
+            if st.button("Enviar ON al ESP32"):
+                ok, err = mqtt_publish("cmqtt_s", {"Act1": "ON"})
+                if ok:
+                    st.session_state.last_mqtt_publish = f"Publicado Act1: ON"
+                    st.success("Se envió ON al ESP32")
+                else:
+                    st.error(f"No se pudo publicar: {err}")
+        with col_send2:
+            if st.button("Enviar OFF al ESP32"):
+                ok, err = mqtt_publish("cmqtt_s", {"Act1": "OFF"})
+                if ok:
+                    st.session_state.last_mqtt_publish = f"Publicado Act1: OFF"
+                    st.success("Se envió OFF al ESP32")
+                else:
+                    st.error(f"No se pudo publicar: {err}")
+
+        # Enviar ángulo sugerido
+        st.markdown("---")
+        if st.button("Enviar ángulo sugerido al ESP32"):
+            # publica en el topic que tu ESP32 escucha para valores analógicos
+            analog_value = float(st.session_state.servo_angle)  # en tu ESP32 mapeas 0..100 -> 0..180; aquí mandamos 0..100 preferible
+            # si quieres mandar 0..100 en vez del ángulo en grados, convierte como en tu ESP32
+            # Aquí mando un campo "Analog" con valor 0..100 (ajusta si tu ESP32 espera otra cosa)
+            ok, err = mqtt_publish("cmqtt_a", {"Analog": analog_value})
+            if ok:
+                st.session_state.last_mqtt_publish = f"Publicado Analog: {analog_value}"
+                st.success(f"Ángulo/valor {analog_value} enviado al ESP32")
+            else:
+                st.error(f"No se pudo publicar: {err}")
+
+        st.markdown("**Última publicación MQTT:**")
+        st.write(st.session_state.last_mqtt_publish)
