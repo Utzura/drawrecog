@@ -24,7 +24,6 @@ def mqtt_publish(topic: str, payload: dict, qos: int = 0, retain: bool = False):
         client = paho.Client(MQTT_CLIENT_ID)
         client.on_publish = lambda c, u, r: print("Publicado:", topic, payload)
         client.connect(BROKER, PORT, keepalive=60)
-        # Convertir payload a JSON string
         payload_str = json.dumps(payload)
         client.publish(topic, payload_str, qos=qos, retain=retain)
         client.disconnect()
@@ -47,6 +46,8 @@ if 'servo_angle' not in st.session_state:
     st.session_state.servo_angle = None
 if 'last_mqtt_publish' not in st.session_state:
     st.session_state.last_mqtt_publish = ""
+if 'slider_value' not in st.session_state:
+    st.session_state.slider_value = 0.0
 
 # ============================
 # Función para convertir imagen a Base64
@@ -139,8 +140,14 @@ if canvas_result.image_data is not None and api_key and analyze_button:
                 max_tokens=500,
             )
 
-            if response.choices[0].message.content is not None:
-                full_response += response.choices[0].message.content
+            # Extraer contenido de forma robusta
+            try:
+                content = response.choices[0].message.content
+            except Exception:
+                content = str(response)
+
+            if content:
+                full_response += content
                 message_placeholder.markdown(full_response)
 
             st.session_state.full_response = full_response
@@ -180,7 +187,10 @@ if st.session_state.analysis_done:
                     messages=[{"role": "user", "content": consejo_prompt}],
                     max_tokens=200,
                 )
-                consejo_texto = consejo_response.choices[0].message.content.strip()
+                try:
+                    consejo_texto = consejo_response.choices[0].message.content.strip()
+                except Exception:
+                    consejo_texto = str(consejo_response)
             except Exception as e:
                 consejo_texto = f"No se pudo obtener un consejo del destino: {e}"
 
@@ -210,7 +220,7 @@ if st.session_state.analysis_done:
                     "se cumpla: \n\n"
                     f"Predicción:\n{st.session_state.full_response}\n\n"
                     "Devuélvelo en formato JSON simple: "
-                    "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>," 
+                    "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<porcentaje entre 0 y 100>,"
                     "\"reason\":\"una frase breve explicando por qué\"}. Solo devuelve JSON."
                 )
                 try:
@@ -219,46 +229,63 @@ if st.session_state.analysis_done:
                         messages=[{"role": "user", "content": prob_prompt}],
                         max_tokens=150,
                     )
-                    prob_text = prob_resp.choices[0].message.content.strip()
 
+                    # Extraer texto de respuesta de forma segura
+                    try:
+                        prob_text = prob_resp.choices[0].message.content.strip()
+                    except Exception:
+                        prob_text = str(prob_resp)
+
+                    # Intentar parsear JSON del modelo
                     try:
                         prob_json = json.loads(prob_text)
                     except Exception:
                         prob_json = {"label": "MEDIO", "confidence": 50, "reason": "Estimación mística automática."}
 
-                    label = prob_json.get("label", "MEDIO")
-                    confidence = prob_json.get("confidence", 50)
-                    reason = prob_json.get("reason", "")
-                    # Normalizar etiqueta del modelo
-                    raw_label = str(label).strip().upper()
+                    # --- NORMALIZAR ETIQUETA ---
+                    raw_label = str(prob_json.get("label", "")).strip().upper()
 
                     if "ALTO" in raw_label:
-                        normalized = "ALTO"
+                        normalized_label = "ALTO"
                     elif "MEDIO" in raw_label or "MEDIA" in raw_label:
-                        normalized = "MEDIO"
+                        normalized_label = "MEDIO"
                     elif "BAJO" in raw_label or "BAJA" in raw_label:
-                        normalized = "BAJO"
+                        normalized_label = "BAJO"
                     else:
-                        normalized = "MEDIO"   # fallback razonable
+                        normalized_label = "MEDIO"   # fallback razonable
 
-# Usar etiqueta normalizada
+                    # Asegurar confidence numérico entre 0 y 100
+                    raw_conf = prob_json.get("confidence", 50)
+                    try:
+                        confidence = int(float(raw_conf))
+                    except Exception:
+                        confidence = 50
+                    if confidence < 0:
+                        confidence = 0
+                    if confidence > 100:
+                        confidence = 100
+
+                    # Mapa corregido (usa etiquetas normalizadas)
                     angle_map = {"ALTO": 160, "MEDIO": 90, "BAJO": 20}
-                    servo_angle = angle_map.get(normalized, 90)
-                    #angle_map = {"ALTO": 160, "ALTA": 160, "MEDIO": 90, "BAJO": 20, "BAJA": 20}
-                    #servo_angle = angle_map.get(str(label).upper(), 90)
+                    servo_angle = angle_map.get(normalized_label, 90)
 
-                    st.session_state.probability_result = {"label": label, "confidence": confidence, "reason": reason}
+                    # Guardar nice JSON con etiqueta normalizada
+                    st.session_state.probability_result = {
+                        "label": normalized_label,
+                        "confidence": confidence,
+                        "reason": prob_json.get("reason", "")
+                    }
                     st.session_state.servo_angle = servo_angle
 
-                    st.success(f"Probabilidad: **{label}** — Confianza: **{confidence}%**")
-                    st.markdown(f"**Motivo:** {reason}")
+                    st.success(f"Probabilidad: **{normalized_label}** — Confianza: **{confidence}%**")
+                    st.markdown(f"**Motivo:** {prob_json.get('reason', '')}")
                     st.markdown(f"**Ángulo sugerido para el servo (Arduino):** **{servo_angle}°**")
-                    
+
                 except Exception as e:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
-  # Mostrar info Arduino si hay probabilidad
-   if st.session_state.probability_result is not None:
+    # Mostrar info Arduino si hay probabilidad
+    if st.session_state.probability_result is not None:
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
         st.markdown(f"""
@@ -278,9 +305,6 @@ if st.session_state.analysis_done:
         # ===============================
         # SLIDER
         # ===============================
-        if "slider_value" not in st.session_state:
-            st.session_state.slider_value = 0.0
-
         new_val = st.slider(
             "Selecciona el rango de valores",
             min_value=0.0,
@@ -319,7 +343,7 @@ if st.session_state.analysis_done:
         # BOTÓN: Enviar ángulo sugerido
         # ===============================
         if st.button("Enviar ángulo sugerido al ESP32"):
-            servo_angle_deg = st.session_state.get("servo_angle", 90)
+            servo_angle_deg = st.session_state.get("servo_angle", 90) or 90
 
             # Convertir 0..180 a 0..100
             percent_value = round((servo_angle_deg / 180.0) * 100.0, 2)
@@ -330,6 +354,7 @@ if st.session_state.analysis_done:
             ok, err = mqtt_publish("cmqtt_a", payload)
             if ok:
                 st.success(f"Publicado {payload} en cmqtt_a")
+                st.session_state.last_mqtt_publish = f"Publicado Analog (sugerido): {payload}"
             else:
                 st.error(f"No se pudo publicar: {err}")
 
@@ -341,7 +366,7 @@ if st.session_state.analysis_done:
         if st.button("Enviar valor manual al ESP32"):
             try:
                 manual_val = float(values)
-            except:
+            except Exception:
                 st.error("El valor del slider no es válido")
                 manual_val = None
 
@@ -351,8 +376,12 @@ if st.session_state.analysis_done:
 
                 if ok:
                     st.success(f"Publicado {payload} en cmqtt_a")
+                    st.session_state.last_mqtt_publish = f"Publicado Analog manual: {payload}"
                 else:
                     st.error(f"No se pudo publicar: {err}")
 
                 st.write("DEBUG publicado:", payload)
+
+        st.markdown("**Última publicación MQTT:**")
+        st.write(st.session_state.last_mqtt_publish)
 
