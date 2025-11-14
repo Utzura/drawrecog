@@ -318,33 +318,35 @@ if st.session_state.analysis_done:
 
         st.markdown("---")
 
-     # Enviar ángulo sugerido (como valor 0..100 que el ESP32 espera)
-    if st.button("Enviar ángulo sugerido al ESP32"):
-    # st.session_state.servo_angle es en grados (0..180)
-        servo_angle_deg = st.session_state.get("servo_angle", 90) or 90
-    # Convertir 0..180 -> 0..100
-        percent_value = round(max(0, min(100, (servo_angle_deg / 180.0) * 100.0)), 2)
-            payload = {"Analog": float(percent_value)}
+   # Enviar ángulo sugerido (como valor 0..100 que el ESP32 espera)
+if st.button("Enviar ángulo sugerido al ESP32"):
+    servo_angle_deg = st.session_state.get("servo_angle", 90) or 90
+    
+    # Convertir 0..180 a 0..100
+    percent_value = round(max(0, min(100, (servo_angle_deg / 180.0) * 100.0)), 2)
+    payload = {"Analog": float(percent_value)}
+
     ok, err = mqtt_publish("cmqtt_a", payload)
     if ok:
         st.session_state.last_mqtt_publish = f"Publicado Analog (sugerido): {payload}"
         st.success(f"Publicado {payload} en cmqtt_a")
     else:
         st.error(f"No se pudo publicar: {err}")
+
     st.write("DEBUG publicado:", payload)
 
 # Enviar valor manual del slider (0..100)
-    st.markdown("---")
-    if st.button("Enviar valor manual al ESP32"):
-    # values viene del slider (0..100)
-            manual_val = float(values)
-            payload = {"Analog": manual_val}
-            ok, err = mqtt_publish("cmqtt_a", payload)
-        if ok:
-            st.session_state.last_mqtt_publish = f"Publicado Analog manual: {payload}"
-            st.success(f"Publicado {payload} en cmqtt_a")
-        else:
-            st.error(f"No se pudo publicar: {err}")
-        st.write("DEBUG publicado:", payload)
-     st.markdown("**Última publicación MQTT:**")
-        st.write(st.session_state.last_mqtt_publish)
+st.markdown("---")
+if st.button("Enviar valor manual al ESP32"):
+    manual_val = float(values)
+    payload = {"Analog": manual_val}
+
+    ok, err = mqtt_publish("cmqtt_a", payload)
+    if ok:
+        st.session_state.last_mqtt_publish = f"Publicado Analog manual: {payload}"
+        st.success(f"Publicado {payload} en cmqtt_a")
+    else:
+        st.error(f"No se pudo publicar: {err}")
+
+    st.write("DEBUG publicado:", payload)
+
