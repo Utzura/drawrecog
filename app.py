@@ -259,6 +259,7 @@ if st.session_state.analysis_done:
         2. VCC (rojo) → 5V (o fuente externa 5V si consume mucho)  
         3. GND (negro/marrón) → GND de Arduino (tierra común si usas fuente externa)  
         """)
+        values = st.slider('Selecciona el rango de valores', 0.0, 100.0, value=0.0)
 
         # Botones para enviar al ESP32 (Wokwi)
         col_send1, col_send2 = st.columns(2)
