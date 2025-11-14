@@ -243,7 +243,7 @@ if st.session_state.analysis_done:
                 except Exception as e:
                     st.error(f"No se pudo evaluar la probabilidad: {e}")
 
-    # Mostrar info Arduino si hay probabilidad
+  # Mostrar info Arduino si hay probabilidad
     if st.session_state.probability_result is not None:
         st.divider()
         st.subheader("Implementación en Servo (Arduino)")
@@ -253,15 +253,36 @@ if st.session_state.analysis_done:
         - Confianza: `{st.session_state.probability_result.get("confidence")}%`  
         - Ángulo sugerido: `{st.session_state.servo_angle}°`  
         """)
+
         st.markdown("""
         **Cómo conectar el servo**
         1. Señal (amarillo/naranja) → Pin PWM (ej. D9)  
-        2. VCC (rojo) → 5V (o fuente externa 5V si consume mucho)  
-        3. GND (negro/marrón) → GND de Arduino (tierra común si usas fuente externa)  
+        2. VCC (rojo) → 5V  
+        3. GND (negro/marrón) → GND  
         """)
-        values = st.slider('Selecciona el rango de valores', 0.0, 100.0, value=0.0)
 
-        # Botones para enviar al ESP32 (Wokwi)
+        # ===============================
+        # SLIDER CORREGIDO
+        # ===============================
+        # Este SIEMPRE arranca en 0 y ya no recuerda valores anteriores
+        if "slider_value" not in st.session_state:
+            st.session_state.slider_value = 0.0
+
+        new_val = st.slider(
+            "Selecciona el rango de valores",
+            min_value=0.0,
+            max_value=100.0,
+            value=st.session_state.slider_value,
+            key="corrected_slider"
+        )
+
+        st.session_state.slider_value = new_val
+        values = st.session_state.slider_value
+        st.write("Valor seleccionado:", values)
+
+        # ===============================
+        # BOTONES MQTT
+        # ===============================
         col_send1, col_send2 = st.columns(2)
         with col_send1:
             if st.button("Enviar ON al ESP32"):
@@ -271,6 +292,7 @@ if st.session_state.analysis_done:
                     st.success("Se envió ON al ESP32")
                 else:
                     st.error(f"No se pudo publicar: {err}")
+
         with col_send2:
             if st.button("Enviar OFF al ESP32"):
                 ok, err = mqtt_publish("cmqtt_s", {"Act1": "OFF"})
@@ -280,17 +302,25 @@ if st.session_state.analysis_done:
                 else:
                     st.error(f"No se pudo publicar: {err}")
 
-        # Enviar ángulo sugerido
         st.markdown("---")
+
+        # Enviar ángulo sugerido
         if st.button("Enviar ángulo sugerido al ESP32"):
-            # publica en el topic que tu ESP32 escucha para valores analógicos
-            analog_value = float(st.session_state.servo_angle)  # en tu ESP32 mapeas 0..100 -> 0..180; aquí mandamos 0..100 preferible
-            # si quieres mandar 0..100 en vez del ángulo en grados, convierte como en tu ESP32
-            # Aquí mando un campo "Analog" con valor 0..100 (ajusta si tu ESP32 espera otra cosa)
+            analog_value = float(st.session_state.servo_angle)
             ok, err = mqtt_publish("cmqtt_a", {"Analog": analog_value})
             if ok:
                 st.session_state.last_mqtt_publish = f"Publicado Analog: {analog_value}"
                 st.success(f"Ángulo/valor {analog_value} enviado al ESP32")
+            else:
+                st.error(f"No se pudo publicar: {err}")
+
+        # Enviar valor manual del slider
+        st.markdown("---")
+        if st.button("Enviar valor manual al ESP32"):
+            ok, err = mqtt_publish("cmqtt_a", {"Analog": float(values)})
+            if ok:
+                st.session_state.last_mqtt_publish = f"Publicado Analog manual: {values}"
+                st.success(f"Valor {values} enviado al ESP32")
             else:
                 st.error(f"No se pudo publicar: {err}")
 
