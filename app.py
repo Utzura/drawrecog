@@ -235,36 +235,52 @@ if st.session_state.analysis_done:
             st.warning("No se pudo generar audio.")
 
     # ============================
-    # PROBABILIDAD (MEJORADA)
+    # PROBABILIDAD (MEJORADA) - DOS PASOS FORZADOS
     # ============================
     if want_prob:
         with st.spinner("Analizando probabilidad..."):
-            prob_prompt = (
-                "Eres un analista místico. Lee la siguiente predicción y responde SOLO UN JSON VÁLIDO sin texto adicional, "
-                "por ejemplo: {\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":85,\"reason\":\"una frase breve\"}. "
-                "Si no puedes evaluar con seguridad, devuelve confianza 40-60 y una razón breve.\n\n"
-                f"Predicción:\n{st.session_state.full_response}\n\n"
-                "IMPORTANTE: no agregues ningún comentario fuera del JSON, ni comillas de más, ni backticks."
-            )
-
+            # Paso 1: pensamiento libre (no usamos la salida)
             try:
-                # temperature=0 para respuestas deterministas; se puede ajustar si quieres más 'juicio'
-                prob_resp = client.responses.create(
+                _ = client.responses.create(
                     model="gpt-4o-mini",
                     input=[
                         {"role": "system", "content": [{"type": "input_text", "text":
-                            "Eres un generador de JSON. Responde solo JSON válido."}]},
-                        {"role": "user", "content": [{"type": "input_text", "text": prob_prompt}]}
+                            "Piensa internamente sobre la siguiente predicción y prepara una evaluación. NO respondas todavía."}]},
+                        {"role": "user", "content": [{"type": "input_text", "text": st.session_state.full_response}]}
                     ],
                     max_output_tokens=200,
+                    temperature=0.7
+                )
+            except Exception:
+                # no crítico si falla el paso de pensamiento
+                pass
+
+            # Paso 2: FORZAR JSON **SIN POSIBILIDAD DE TEXTO EXTRA**
+            prob_prompt = (
+                "Responde únicamente con un JSON válido y NADA más. No incluyas comentarios, texto externo, "
+                "ni explicaciones. El formato obligatorio es EXACTO:\n"
+                "{\"label\": \"ALTO|MEDIO|BAJO\", \"confidence\": <número entre 0 y 100>, \"reason\": \"una frase breve\"}\n\n"
+                "Si no puedes evaluar con certeza, devuelve confianza entre 40 y 60. "
+                "Cualquier salida que no sea solo el JSON será ignorada."
+            )
+
+            try:
+                final = client.responses.create(
+                    model="gpt-4o-mini",
+                    input=[
+                        {"role": "system", "content": [{"type": "input_text", "text":
+                            "Eres un generador de JSON. Responde SOLO con JSON válido en una sola línea."}]},
+                        {"role": "user", "content": [{"type":"input_text","text": prob_prompt}]}
+                    ],
+                    max_output_tokens=120,
                     temperature=0.0
                 )
 
-                prob_text = getattr(prob_resp, "output_text", None)
-                if not prob_text:
-                    # intentar unir texto de salida
+                raw = getattr(final, "output_text", None) or ""
+                if not raw:
+                    # intentar extraer de estructura output[]
                     try:
-                        parts = prob_resp.output
+                        parts = final.output
                         collected = []
                         for item in parts:
                             for c in item.get("content", []):
@@ -272,35 +288,41 @@ if st.session_state.analysis_done:
                                     collected.append(c.get("text", ""))
                                 elif isinstance(c, str):
                                     collected.append(c)
-                        prob_text = "\n".join(collected).strip()
+                        raw = "\n".join(collected).strip()
                     except Exception:
-                        prob_text = ""
+                        raw = ""
 
-                # Extraer JSON del texto (si vino con explicaciones)
-                prob_json = extract_first_json(prob_text)
+                # Intentar parsear directo
+                prob_json = None
+                try:
+                    prob_json = json.loads(raw)
+                except Exception:
+                    prob_json = extract_first_json(raw)
 
-                # Si no encontramos JSON, intentar parsear como JSON directo
+                # Si sigue fallando, reintento ultra-restrictivo
                 if prob_json is None:
-                    try:
-                        prob_json = json.loads(prob_text)
-                    except Exception:
-                        prob_json = None
-
-                # Si aún no hay JSON, intentar una segunda consulta para forzar JSON (fallback)
-                if prob_json is None:
-                    fallback_prompt = (
-                        "La respuesta anterior no fue JSON válido. "
-                        "Por favor, responde ahora SOLO con un JSON válido en una sola línea "
-                        "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<0-100>,\"reason\":\"breve\"} "
-                        f"Basado en esta predicción:\n{st.session_state.full_response}"
-                    )
                     retry = client.responses.create(
                         model="gpt-4o-mini",
-                        input=[{"role":"user","content":[{"type":"input_text","text":fallback_prompt}]}],
-                        max_output_tokens=120,
+                        input=[{"role":"user","content":[{"type":"input_text","text":
+                            "RESPONDE AHORA SOLO CON UN JSON VÁLIDO EN UNA LÍNEA: "
+                            "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<0-100>,\"reason\":\"breve\"}"}]}],
+                        max_output_tokens=80,
                         temperature=0.0
                     )
                     retry_text = getattr(retry, "output_text", None) or ""
+                    if not retry_text:
+                        try:
+                            parts = retry.output
+                            collected = []
+                            for item in parts:
+                                for c in item.get("content", []):
+                                    if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
+                                        collected.append(c.get("text", ""))
+                                    elif isinstance(c, str):
+                                        collected.append(c)
+                            retry_text = "\n".join(collected).strip()
+                        except Exception:
+                            retry_text = ""
                     prob_json = extract_first_json(retry_text)
                     if prob_json is None:
                         try:
@@ -308,9 +330,9 @@ if st.session_state.analysis_done:
                         except Exception:
                             prob_json = None
 
-                # Si aún no hay JSON, fallback razonable
+                # Fallback final si todo falla
                 if prob_json is None:
-                    prob_json = {"label": "MEDIO", "confidence": 50, "reason": "No se pudo parsear respuesta del Oráculo."}
+                    prob_json = {"label": "MEDIO", "confidence": 50, "reason": "No se pudo extraer JSON del modelo."}
 
                 # Normalizar y asegurar tipos
                 raw_label = str(prob_json.get("label", "MEDIO")).upper()
