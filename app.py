@@ -9,6 +9,7 @@ from gtts import gTTS
 from streamlit_drawable_canvas import st_canvas
 import json
 import paho.mqtt.client as paho
+import re
 
 # ============================
 # Config MQTT
@@ -28,7 +29,7 @@ def mqtt_publish(topic: str, payload: dict, qos: int = 0, retain: bool = False):
         return False, str(e)
 
 # ============================
-# Session State
+# Session State defaults
 # ============================
 for key, value in {
     "analysis_done": False,
@@ -37,12 +38,13 @@ for key, value in {
     "probability_result": None,
     "servo_angle": None,
     "last_mqtt_publish": "",
-    "slider_value": 0.0
+    "slider_value": 0.0,
+    "last_prompt_text": ""
 }.items():
     st.session_state.setdefault(key, value)
 
 # ============================
-# Base64 image
+# Helpers
 # ============================
 def encode_image_to_base64(image_path):
     try:
@@ -50,6 +52,39 @@ def encode_image_to_base64(image_path):
             return base64.b64encode(img.read()).decode("utf-8")
     except:
         return None
+
+def extract_first_json(text: str):
+    """
+    Extrae el primer objeto JSON válido encontrado en text.
+    Devuelve None si no encuentra un JSON bien formado.
+    """
+    if not text:
+        return None
+    # Buscar la primera "{" y el correspondiente "}" balanceado
+    start = text.find("{")
+    if start == -1:
+        return None
+    stack = []
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            stack.append("{")
+        elif text[i] == "}":
+            if not stack:
+                # cierre sin apertura
+                continue
+            stack.pop()
+            if not stack:
+                candidate = text[start:i+1]
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    # intentar continuar buscando si hay otro { más adelante
+                    next_start = text.find("{", start+1)
+                    if next_start == -1 or next_start <= start:
+                        return None
+                    start = next_start
+                    stack = []
+    return None
 
 # ============================
 # UI
@@ -95,24 +130,52 @@ if canvas_result.image_data is not None and api_key and st.button("🔮 Revela m
         base64_img = encode_image_to_base64("img.png")
         st.session_state.base64_image = base64_img
 
-        # Llamada correcta al modelo
+        # Texto que el usuario verá (lo guardamos y mostramos)
+        prompt_text = (
+            "Eres un oráculo místico. Basado en este dibujo, interpreta el destino del usuario "
+            "con símbolos, metáforas y un tono enigmático y espiritual. Evita dar instrucciones técnicas; "
+            "usa un lenguaje evocador y breve."
+        )
+        st.session_state.last_prompt_text = prompt_text
+
+        # Llamada correcta al modelo (con tipos correctos)
         try:
             response = client.responses.create(
                 model="gpt-4o-mini",
                 input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text":
-                                "Eres un oráculo místico. Interpreta este dibujo con tono enigmático."},
-                            {"type": "input_image", "image_url": f"data:image/png;base64,{base64_img}"}
-                        ]
-                    }
-                ]
+                    {"role": "system", "content": [{"type": "input_text", "text":
+                        "Eres un oráculo místico. Responde en español."}]},
+                    {"role": "user", "content": [
+                        {"type": "input_text", "text": prompt_text},
+                        {"type": "input_image", "image_url": f"data:image/png;base64,{base64_img}"}
+                    ]}
+                ],
+                max_output_tokens=700,
+                temperature=0.7
             )
 
-            out = response.output[0].content[0].text
-            st.session_state.full_response = out
+            # Preferencia: usar output_text si existe
+            content = getattr(response, "output_text", None)
+            if not content:
+                # intentar leer de response.output[*]
+                try:
+                    parts = response.output
+                    # concatenar cualquier text en content entries
+                    collected = []
+                    for item in parts:
+                        for c in item.get("content", []):
+                            # algunas respuestas vienen con {"type":"output_text","text": "..."}
+                            if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
+                                collected.append(c.get("text", ""))
+                            elif isinstance(c, dict) and "text" in c:
+                                collected.append(c.get("text", ""))
+                            elif isinstance(c, str):
+                                collected.append(c)
+                    content = "\n".join(collected).strip()
+                except Exception:
+                    content = ""
+
+            st.session_state.full_response = content or "El Oráculo no devolvió texto."
             st.session_state.analysis_done = True
 
         except Exception as e:
@@ -122,6 +185,9 @@ if canvas_result.image_data is not None and api_key and st.button("🔮 Revela m
 # MOSTRAR DESTINO
 # ============================
 if st.session_state.analysis_done:
+    st.subheader("Mensaje enviado al Oráculo (prompt):")
+    st.markdown(f"> {st.session_state.last_prompt_text}")
+
     st.subheader("𓁻 Tu destino revelado 𓁻")
     st.markdown(st.session_state.full_response)
 
@@ -138,17 +204,24 @@ if st.session_state.analysis_done:
     if want_advice:
         with st.spinner("Consultando consejo espiritual..."):
             prompt = (
-                "Da un consejo místico basado en esta predicción: "
-                f"{st.session_state.full_response}"
+                "Da un consejo místico en español, breve y en tono inspirador, "
+                f"basado en esta predicción:\n\n{st.session_state.full_response}"
             )
 
             response = client.responses.create(
                 model="gpt-4o-mini",
-                input=[{"role": "user", "content":
-                    [{"type":"input_text", "text": prompt}]}]
+                input=[{"role": "user", "content": [{"type":"input_text","text":prompt}]}],
+                max_output_tokens=200,
+                temperature=0.6
             )
 
-            consejo = response.output[0].content[0].text
+            consejo = getattr(response, "output_text", None)
+            if not consejo:
+                # intentar leer fallback
+                try:
+                    consejo = response.output[0].content[0].text
+                except Exception:
+                    consejo = "El Oráculo no pudo generar un consejo."
 
         st.subheader("⋆.˚ Consejo del destino ⋆.˚")
         st.markdown(consejo)
@@ -157,46 +230,119 @@ if st.session_state.analysis_done:
         try:
             tts = gTTS(consejo, lang="es")
             tts.save("consejo.mp3")
-            st.audio(open("consejo.mp3", "rb").read())
-        except:
+            st.audio(open("consejo.mp3", "rb").read(), format="audio/mp3")
+        except Exception:
             st.warning("No se pudo generar audio.")
 
     # ============================
-    # PROBABILIDAD
+    # PROBABILIDAD (MEJORADA)
     # ============================
     if want_prob:
         with st.spinner("Analizando probabilidad..."):
-            prompt = (
-                "Evalúa la siguiente predicción y responde SOLO JSON:\n"
-                "{\"label\":\"ALTO|MEDIO|BAJO\", \"confidence\":0-100, \"reason\":\"breve\"}\n"
-                f"Predicción: {st.session_state.full_response}"
+            prob_prompt = (
+                "Eres un analista místico. Lee la siguiente predicción y responde SOLO UN JSON VÁLIDO sin texto adicional, "
+                "por ejemplo: {\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":85,\"reason\":\"una frase breve\"}. "
+                "Si no puedes evaluar con seguridad, devuelve confianza 40-60 y una razón breve.\n\n"
+                f"Predicción:\n{st.session_state.full_response}\n\n"
+                "IMPORTANTE: no agregues ningún comentario fuera del JSON, ni comillas de más, ni backticks."
             )
 
-            response = client.responses.create(
-                model="gpt-4o-mini",
-                input=[{"role":"user", "content":[{"type":"input_text","text":prompt}]}]
-            )
+            try:
+                # temperature=0 para respuestas deterministas; se puede ajustar si quieres más 'juicio'
+                prob_resp = client.responses.create(
+                    model="gpt-4o-mini",
+                    input=[
+                        {"role": "system", "content": [{"type": "input_text", "text":
+                            "Eres un generador de JSON. Responde solo JSON válido."}]},
+                        {"role": "user", "content": [{"type": "input_text", "text": prob_prompt}]}
+                    ],
+                    max_output_tokens=200,
+                    temperature=0.0
+                )
 
-            out = response.output[0].content[0].text
+                prob_text = getattr(prob_resp, "output_text", None)
+                if not prob_text:
+                    # intentar unir texto de salida
+                    try:
+                        parts = prob_resp.output
+                        collected = []
+                        for item in parts:
+                            for c in item.get("content", []):
+                                if isinstance(c, dict) and c.get("type") in ("output_text", "text"):
+                                    collected.append(c.get("text", ""))
+                                elif isinstance(c, str):
+                                    collected.append(c)
+                        prob_text = "\n".join(collected).strip()
+                    except Exception:
+                        prob_text = ""
 
-        try:
-            result = json.loads(out)
-        except:
-            result = {"label": "MEDIO", "confidence": 50, "reason": "Auto fallback"}
+                # Extraer JSON del texto (si vino con explicaciones)
+                prob_json = extract_first_json(prob_text)
 
-        label = result["label"].upper()
-        if "ALTO" in label: label = "ALTO"
-        elif "BAJO" in label: label = "BAJO"
-        else: label = "MEDIO"
+                # Si no encontramos JSON, intentar parsear como JSON directo
+                if prob_json is None:
+                    try:
+                        prob_json = json.loads(prob_text)
+                    except Exception:
+                        prob_json = None
 
-        angle = {"ALTO":160, "MEDIO":90, "BAJO":20}[label]
+                # Si aún no hay JSON, intentar una segunda consulta para forzar JSON (fallback)
+                if prob_json is None:
+                    fallback_prompt = (
+                        "La respuesta anterior no fue JSON válido. "
+                        "Por favor, responde ahora SOLO con un JSON válido en una sola línea "
+                        "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":<0-100>,\"reason\":\"breve\"} "
+                        f"Basado en esta predicción:\n{st.session_state.full_response}"
+                    )
+                    retry = client.responses.create(
+                        model="gpt-4o-mini",
+                        input=[{"role":"user","content":[{"type":"input_text","text":fallback_prompt}]}],
+                        max_output_tokens=120,
+                        temperature=0.0
+                    )
+                    retry_text = getattr(retry, "output_text", None) or ""
+                    prob_json = extract_first_json(retry_text)
+                    if prob_json is None:
+                        try:
+                            prob_json = json.loads(retry_text)
+                        except Exception:
+                            prob_json = None
 
-        st.session_state.probability_result = result
-        st.session_state.servo_angle = angle
+                # Si aún no hay JSON, fallback razonable
+                if prob_json is None:
+                    prob_json = {"label": "MEDIO", "confidence": 50, "reason": "No se pudo parsear respuesta del Oráculo."}
 
-        st.success(f"Probabilidad: {label} — {result['confidence']}%")
-        st.write(f"Motivo: {result['reason']}")
-        st.write(f"Ángulo sugerido: {angle}°")
+                # Normalizar y asegurar tipos
+                raw_label = str(prob_json.get("label", "MEDIO")).upper()
+                if "ALTO" in raw_label:
+                    normalized_label = "ALTO"
+                elif "BAJO" in raw_label:
+                    normalized_label = "BAJO"
+                else:
+                    normalized_label = "MEDIO"
+
+                try:
+                    confidence = int(float(prob_json.get("confidence", 50)))
+                except Exception:
+                    confidence = 50
+                confidence = max(0, min(100, confidence))
+
+                angle_map = {"ALTO": 160, "MEDIO": 90, "BAJO": 20}
+                servo_angle = angle_map.get(normalized_label, 90)
+
+                st.session_state.probability_result = {
+                    "label": normalized_label,
+                    "confidence": confidence,
+                    "reason": prob_json.get("reason", "")
+                }
+                st.session_state.servo_angle = servo_angle
+
+                st.success(f"Probabilidad: **{normalized_label}** — Confianza: **{confidence}%**")
+                st.markdown(f"**Motivo:** {prob_json.get('reason', '')}")
+                st.markdown(f"**Ángulo sugerido para servo:** **{servo_angle}°**")
+
+            except Exception as e:
+                st.error(f"No se pudo evaluar la probabilidad: {e}")
 
 # ============================
 # CONTROLES DE ARDUINO + MQTT
@@ -205,15 +351,16 @@ if st.session_state.probability_result:
     st.divider()
     st.subheader("Servo (Arduino)")
 
-    angle = st.session_state.servo_angle
+    angle = st.session_state.servo_angle or 90
 
     st.write(f"Ángulo recomendado: **{angle}°**")
 
-    # Slider
+    # Slider manual (0..100)
     new_val = st.slider(
         "Valor manual (0-100)",
         0.0, 100.0,
-        value=st.session_state.slider_value
+        value=st.session_state.slider_value,
+        key="manual_slider"
     )
     st.session_state.slider_value = new_val
 
@@ -222,27 +369,40 @@ if st.session_state.probability_result:
     # ON/OFF
     if colA.button("Enviar ON"):
         ok, err = mqtt_publish("cmqtt_s", {"Act1": "ON"})
-        if ok: st.success("ON enviado.")
-        else: st.error(err)
+        if ok:
+            st.success("ON enviado.")
+        else:
+            st.error(err)
 
     if colB.button("Enviar OFF"):
         ok, err = mqtt_publish("cmqtt_s", {"Act1": "OFF"})
-        if ok: st.success("OFF enviado.")
-        else: st.error(err)
+        if ok:
+            st.success("OFF enviado.")
+        else:
+            st.error(err)
 
     st.markdown("---")
 
-    # Sugerido
+    # Enviar ángulo sugerido
     if st.button("Enviar ángulo sugerido"):
         percent = round((angle / 180) * 100, 2)
         payload = {"Analog": percent}
         ok, err = mqtt_publish("cmqtt_a", payload)
-        if ok: st.success(f"Publicado: {payload}")
-        else: st.error(err)
+        if ok:
+            st.success(f"Publicado: {payload}")
+            st.session_state.last_mqtt_publish = f"Publicado Analog (sugerido): {payload}"
+        else:
+            st.error(err)
 
-    # Manual
+    # Enviar manual
     if st.button("Enviar manual"):
         payload = {"Analog": float(new_val)}
         ok, err = mqtt_publish("cmqtt_a", payload)
-        if ok: st.success(f"Publicado: {payload}")
-        else: st.error(err)
+        if ok:
+            st.success(f"Publicado: {payload}")
+            st.session_state.last_mqtt_publish = f"Publicado Analog manual: {payload}"
+        else:
+            st.error(err)
+
+    st.markdown("**Última publicación MQTT:**")
+    st.write(st.session_state.last_mqtt_publish)
