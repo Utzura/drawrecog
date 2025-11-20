@@ -92,6 +92,7 @@ canvas_result = st_canvas(
 ke = st.text_input('Ingresa tu Clave Mágica (API Key)', type="password")
 os.environ['OPENAI_API_KEY'] = ke
 api_key = os.environ.get('OPENAI_API_KEY', '')
+
 client = None
 if api_key:
     try:
@@ -107,7 +108,7 @@ analyze_button = st.button("🔮 Revela mi futuro")
 if canvas_result.image_data is not None and api_key and analyze_button:
     with st.spinner("Consultando al Oráculo..."):
 
-        # Guardar imagen
+        # Convert canvas → PNG
         input_numpy_array = np.array(canvas_result.image_data)
         input_image = Image.fromarray(input_numpy_array.astype('uint8')).convert('RGBA')
         input_image.save('img.png')
@@ -117,25 +118,20 @@ if canvas_result.image_data is not None and api_key and analyze_button:
 
         prompt_text = (
             "Eres un oráculo místico. Basado en este dibujo, interpreta el destino del usuario "
-            "con tono enigmático y espiritual."
+            "con símbolos, metáforas y tono enigmático."
         )
 
         try:
-            # ========== NUEVA API ==========
+            # ========== NUEVA API RESPONSES ==========
             response = client.responses.create(
                 model="gpt-4o-mini",
                 input=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "text", "text": prompt_text},
-                            {
-                                "type": "input_image",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{base64_image}"
-                                }
-                            }
-                        ]
+                            {"type": "input_text", "text": prompt_text},
+                            {"type": "input_image", "image_url": f"data:image/png;base64,{base64_image}"}
+                        ],
                     }
                 ],
                 max_output_tokens=500,
@@ -148,7 +144,9 @@ if canvas_result.image_data is not None and api_key and analyze_button:
         except Exception as e:
             st.error(f"Ocurrió un error en la lectura del destino: {e}")
 
+# ============================
 # Mostrar resultado
+# ============================
 if st.session_state.analysis_done:
     st.divider()
     st.subheader("𓁻 Tu destino revelado 𓁻")
@@ -168,13 +166,13 @@ if st.session_state.analysis_done:
         with st.spinner("Consultando sabiduría..."):
             consejo_prompt = (
                 f"Basado en esta predicción del futuro: '{st.session_state.full_response}', "
-                "da un consejo espiritual breve y místico."
+                "da un consejo espiritual breve, profundo y místico."
             )
 
             try:
                 consejo_response = client.responses.create(
                     model="gpt-4o-mini",
-                    input=consejo_prompt,
+                    input=[{"role": "user", "content":[{"type":"input_text","text": consejo_prompt}]}],
                     max_output_tokens=200,
                 )
                 consejo_texto = consejo_response.output_text.strip()
@@ -185,7 +183,7 @@ if st.session_state.analysis_done:
         st.subheader("⋆.˚Consejo del destino⋆.˚")
         st.markdown(consejo_texto)
 
-        # TTS
+        # TTS Audio
         try:
             tts = gTTS(consejo_texto, lang="es")
             audio_path = "consejo_oraculo.mp3"
@@ -201,29 +199,27 @@ if st.session_state.analysis_done:
         with st.spinner("El Oráculo analiza el destino..."):
 
             prob_prompt = (
-                "Evalúa la probabilidad de esta predicción:\n"
+                "Evalúa la probabilidad de la siguiente predicción:\n"
                 f"{st.session_state.full_response}\n\n"
-                "Devuelve JSON así: "
+                "Devuelve SOLO JSON: "
                 "{\"label\":\"ALTO|MEDIO|BAJO\",\"confidence\":0-100,\"reason\":\"texto\"}"
             )
 
             try:
                 prob_resp = client.responses.create(
                     model="gpt-4o-mini",
-                    input=prob_prompt,
+                    input=[{"role":"user","content":[{"type":"input_text","text":prob_prompt}]}],
                     max_output_tokens=150,
                 )
 
                 prob_text = prob_resp.output_text.strip()
 
-                # Parse JSON
                 try:
                     prob_json = json.loads(prob_text)
                 except:
-                    prob_json = {"label": "MEDIO", "confidence": 50, "reason": "Autogenerado"}
+                    prob_json = {"label":"MEDIO","confidence":50,"reason":"Estimación automática"}
 
-                # Normalizar
-                raw_label = str(prob_json.get("label", "")).upper()
+                raw_label = prob_json.get("label","MEDIO").upper()
 
                 if "ALTO" in raw_label:
                     normalized_label = "ALTO"
@@ -232,16 +228,16 @@ if st.session_state.analysis_done:
                 else:
                     normalized_label = "MEDIO"
 
-                confidence = int(float(prob_json.get("confidence", 50)))
+                confidence = int(float(prob_json.get("confidence",50)))
                 confidence = max(0, min(100, confidence))
 
-                angle_map = {"ALTO": 160, "MEDIO": 90, "BAJO": 20}
+                angle_map = {"ALTO":160, "MEDIO":90, "BAJO":20}
                 servo_angle = angle_map[normalized_label]
 
                 st.session_state.probability_result = {
                     "label": normalized_label,
                     "confidence": confidence,
-                    "reason": prob_json.get("reason", "")
+                    "reason": prob_json.get("reason","")
                 }
                 st.session_state.servo_angle = servo_angle
 
@@ -252,53 +248,49 @@ if st.session_state.analysis_done:
                 st.error(f"No se pudo evaluar: {e}")
 
     # ============================
-    # CONTROLES + MQTT + SERVO
+    # MQTT + SERVO
     # ============================
-    if st.session_state.probability_result is not None:
+    if st.session_state.probability_result:
 
         st.divider()
         st.subheader("Implementación Servo (Arduino)")
         st.markdown(f"""
-        **Etiqueta:** `{st.session_state.probability_result.get("label")}`  
-        **Confianza:** `{st.session_state.probability_result.get("confidence")}%`  
+        **Etiqueta:** `{st.session_state.probability_result['label']}`  
+        **Confianza:** `{st.session_state.probability_result['confidence']}%`  
         **Ángulo sugerido:** `{st.session_state.servo_angle}°`  
         """)
 
+        # Slider manual
         new_val = st.slider(
-            "Selecciona el rango de valores",
-            min_value=0.0,
-            max_value=100.0,
-            value=st.session_state.slider_value,
-            key="corrected_slider"
+            "Selecciona un valor manual",
+            0.0, 100.0,
+            st.session_state.slider_value,
+            key="manual_slider"
         )
-
         st.session_state.slider_value = new_val
-        st.write("Valor seleccionado:", new_val)
 
-        col1, col2 = st.columns(2)
+        colMQ1, colMQ2 = st.columns(2)
 
-        with col1:
+        with colMQ1:
             if st.button("Enviar ON al ESP32"):
                 ok, err = mqtt_publish("cmqtt_s", {"Act1": "ON"})
                 st.success("ON enviado") if ok else st.error(err)
 
-        with col2:
+        with colMQ2:
             if st.button("Enviar OFF al ESP32"):
                 ok, err = mqtt_publish("cmqtt_s", {"Act1": "OFF"})
                 st.success("OFF enviado") if ok else st.error(err)
 
         # Enviar ángulo sugerido
         if st.button("Enviar ángulo sugerido al ESP32"):
-            percent_value = round((st.session_state.servo_angle / 180) * 100, 2)
-            percent_value = max(0, min(100, percent_value))
-
-            payload = {"Analog": float(percent_value)}
-
+            percent = round((st.session_state.servo_angle / 180) * 100, 2)
+            percent = max(0, min(100, percent))
+            payload = {"Analog": percent}
             ok, err = mqtt_publish("cmqtt_a", payload)
             st.success(f"Publicado {payload}") if ok else st.error(err)
 
-        # Enviar valor manual
-        if st.button("Enviar valor manual al ESP32"):
+        # Enviar manual
+        if st.button("Enviar valor manual"):
             payload = {"Analog": float(st.session_state.slider_value)}
             ok, err = mqtt_publish("cmqtt_a", payload)
             st.success(f"Publicado {payload}") if ok else st.error(err)
